@@ -88,10 +88,14 @@ def process_data(this_y,stims, force_baseline, do_max_adj, remove_downtrend,subt
     return this_y, this_stims
     
 
-def find_sat_from_fit(sig2opt,func,sat_changes=True):
+def find_sat_from_fit(sig2opt,func,sat_changes=True, low_changes=False):
     y_vals = func(np.linspace(0,500,501), *sig2opt)
     if sat_changes:
-        sat_approach = np.where(y_vals>.85*sig2opt[0])
+        
+        if low_changes:
+            sat_approach = np.where(fit_vals>.85*sig2opt[0]+sig2opt[-1])
+        else:
+            sat_approach = np.where(y_vals>.85*sig2opt[0])
     else:
         sat_approach = np.where(y_vals>.85)
     if len(sat_approach[0])>0:

@@ -227,30 +227,39 @@ def get_suite2p_mimg(base_path):
         mimg[:,:,1,iplane] = mimg_green 
     return mimg.astype('float32')
 
-""" image manipulations """
+"""%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% image manipulations%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%5 """
+
 def scale_array(mimg, ranges):
     mimg=mimg.copy().astype('float32')
     mimg[mimg<ranges[0]] = ranges[0]
-    mimg[mimg>ranges[1]] = ranges[1]
+    
     mimg -= ranges[0]
-    mimg /= ranges[1]
+    mimg[mimg>ranges[1]-ranges[0]] = ranges[1]-ranges[0]
+    mimg /= (ranges[1]-ranges[0])
     return mimg
 
 def scale_mimg(mimgs, ranges):
     mimgs = mimgs.copy()
     chan_conv = [1,0]
     for iplane in range(mimgs.shape[3]):
-        for ichan in range(2):
-            mimg = mimgs[:,:,chan_conv[ichan],iplane]
+        for ichan in range(min(mimgs.shape[2],2)):
+            if mimgs.shape[2]>1:
+                mimg = mimgs[:,:,chan_conv[ichan],iplane]
+            else:
+                mimg = mimgs[:,:,ichan,iplane]
             mimg[mimg<ranges[ichan][0]] = ranges[ichan][0]
             mimg[mimg>ranges[ichan][1]] = ranges[ichan][1]
             mimg -= ranges[ichan][0]
-            mimg /= ranges[ichan][1]
-            mimgs[:,:, chan_conv[ichan],iplane]=mimg
+            #print(mimg.max())
+            mimg /= (ranges[ichan][1]-ranges[ichan][0])
+            #print(mimg.max())
+            if mimgs.shape[2]>1:
+                mimgs[:,:, chan_conv[ichan],iplane]=mimg
+            else:
+                mimgs[:,:,ichan,iplane]=mimg
     return mimgs
 
-def scale_mimg_auto(mimgs):
-    prctiles = [5,95]
+def scale_mimg_auto(mimgs,prctiles = [5,95]):
     mimgs=mimgs.copy()
     chan_conv = [1,0]
     for iplane in range(mimgs.shape[3]):
@@ -309,11 +318,24 @@ def mean_by_trial(df, start, stop, add_columns=[]):
 
     return mean_on
 
+def mean_of_triwise_mean(mean_post,col='power'):
+    #gives a single value per stim value, rather than per trial
+    mean_diffs = mean_post.groupby(['cell',col]).mean()
+    sem_diffs = mean_post.groupby(['cell',col]).df.sem()
+
+    mean_diffs = mean_diffs.reset_index(level=['cell',col])
+    mean_diffs['sem'] = sem_diffs.values
+    return mean_diffs
 
 """%%%%%%%%%%%%%%%%%%%%%555 plotting things %%%%%%%%%%%%%%%%%%%%%%%%%%"""
 def figsize(w,h):
     plt.gcf().set_size_inches(w,h)
     
+def get_maxproj_fullsize(ops):
+    mimg = np.zeros((512,512))
+    mimg[ops['yrange'][0]:ops['yrange'][1],ops['xrange'][0]:ops['xrange'][1]] = ops['max_proj']
+    return mimg
+
 
 def cmap_map(function, cmap):
     """ Applies function (which should operate on vectors of shape 3: [r, g, b]), on colormap cmap.
