@@ -21,7 +21,7 @@ from gen_utils import *
 from skimage.feature import register_translation
 from skimage.feature.register_translation import _upsampled_dft
 from scipy.ndimage import fourier_shift
-
+import time
 
 ## These are for .mat files <7.1 (ie. not hdf5)
 
@@ -33,6 +33,7 @@ def get_holo_targs_by_seq(mat, is_pbal = False):
                           for s in mat['ExpStruct'][0,0]['outParams'][0,0]['sequence'][0]])
     #hack, for now the ensemble size is always the same so use a numpy array
     rois = mat['ExpStruct'][0,0]['holoRequest'][0,0]['rois'][0]
+    print('roi length is ', rois.shape)
     rois = np.squeeze(np.dstack(rois))
     ens_size = rois.shape[0]
     targs_in_seq = np.zeros((len(first_roi),ens_size))
@@ -43,11 +44,11 @@ def get_holo_targs_by_seq(mat, is_pbal = False):
             #two different -1 for matlab fixes
             targs_in_seq[iroi,:] = rois[:,roi-1]-1 #MATLAB INDEX FIX
     if is_pbal:
-        print(targs_in_seq)
+        #print(targs_in_seq)
         max_per_seq = targs_in_seq.max(axis=1)
-        print(max_per_seq)
+        #print(max_per_seq)
         is_bal = max_per_seq<=int(get_holo_targs(mat).shape[0]/2)
-        print(is_bal)
+        #print(is_bal)
         targs_in_seq[targs_in_seq>int(get_holo_targs(mat).shape[0]/2)] -= int(get_holo_targs(mat).shape[0]/2)
     else:
         is_bal = np.zeros((targs_in_seq.shape[0],1))
@@ -92,6 +93,10 @@ def get_pulses(mat):
     pulse_list = mat['ExpStruct'][0,0]['outParams'][0,0]['pulses'][0]
     return pulse_list
 
+def get_ncells(mat):
+    cell_list = mat['ExpStruct'][0,0]['outParams'][0,0]['cellsPerHolo'][0]
+    return cell_list
+
 def get_trial_power(mat):
     """Returns a list of the power used (in mW) on a per trial basis.
 
@@ -103,9 +108,6 @@ def get_trial_power(mat):
     conds = get_trial_conds(mat)
     pwr_list = get_powers(mat)
 
-    print('Powers used (in mW): ', pwr_list)
-    print('Trial conditions: ', conds)
-
     for i,cond in enumerate(conds):
         trial_power.append(pwr_list[int(cond-1)]) # stupid matlab indexing fix
 
@@ -113,6 +115,20 @@ def get_trial_power(mat):
 
 def get_trial_pulses(mat):
     """returns a list of the number of pulses on a per trial basis
+    Inputs:
+        mat (dict): data from the NoDaq .mat loaded by scipy.io.loadmat
+    """
+    trial_power = []
+    conds = get_trial_conds(mat)
+    pwr_list = get_pulses(mat)
+
+    for i,cond in enumerate(conds):
+        trial_power.append(pwr_list[int(cond-1)]) # stupid matlab indexing fix
+
+    return trial_power
+
+def get_trial_ncells(mat):
+    """returns a list of the number of ncells on a per trial basis
     Inputs:
         mat (dict): data from the NoDaq .mat loaded by scipy.io.loadmat
     """
@@ -147,6 +163,7 @@ def get_target_mapping(mat, base_path, planes_key=None, pixel_shift = None):
         planes_key (list or arr): 1d arr of all the planes, for if some aren't shot
         pixel_shift (arr, planesx2): shift btwn masks and suite2p.
     """
+    mat = mat.copy() #in place stuff was fucking my shit UP
     holo_targs = get_holo_targs(mat)
     medians = get_cell_field(base_path, 'med')
     planes = get_cell_field(base_path, 'iplane')
@@ -156,9 +173,6 @@ def get_target_mapping(mat, base_path, planes_key=None, pixel_shift = None):
     target_mapping = np.empty((holo_targs.shape[0],),dtype='int16')
     target_dists = np.empty((holo_targs.shape[0],),dtype='float64')
 
-    if pixel_shift is not None:
-            for _ in range(5):
-                print('NOT SURE ABT WHICH PIXEL SHIFT IS X OR Y')
     for i,targ in enumerate(holo_targs):
         plane_idx = np.where(planes_key==targ[2])[0]
         cells_this_plane = np.where(planes==plane_idx)[0]
@@ -258,6 +272,7 @@ def py_get_psth(base_path, mat_path, dfof_method, tifFolder, pre_time, length, e
     
     if not is_online_data and epoch>1:
         fstarts = fstarts + get_prev_folder_length(base_path, epoch)
+        print('len fstarts', len(fstarts))
         
     #file_starts, full_lengths, _ = get_starts_multifolder(tifFolder, base_path, get_stim_starts=False)
     FR = get_fr(tifFolder + base_path.split('/')[-3].split('_')[0] +'/') 
@@ -265,14 +280,19 @@ def py_get_psth(base_path, mat_path, dfof_method, tifFolder, pre_time, length, e
     
     if traces is None:
         _,_,_, sp, traces = get_iscell_F_Neu(base_path)
-
+    
     if get_spikes:
         traces = sp
 
     if not is_online_data:
         holo_target_matches, dists = get_target_mapping(mat, base_path, planes_key=planes_key)
         traces = traces[holo_target_matches,:]
-
+    
+    if traces.shape[0]>first_stim_times.shape[0]:
+        print('padding first stim times length')
+        anStimTimes=np.zeros((1,traces.shape[0]))
+        anStimTimes[0,0:first_stim_times.shape[0]] = first_stim_times
+        first_stim_times=anStimTimes[0,:]
 
     #fstarts = file_starts[epoch-1]
     #epoch_lengths = [sum(flen) for flen in full_lengths]
@@ -282,7 +302,6 @@ def py_get_psth(base_path, mat_path, dfof_method, tifFolder, pre_time, length, e
 
     #percentile dff method is based on whole trace, so do now
     traces = do_pre_dfof(traces, dfof_method, do_zscore)
-
     #initialize psf array
     cut_traces = np.zeros((int(np.shape(fstarts)[0]), int(np.shape(traces)[0]), length))
 
@@ -299,7 +318,7 @@ def py_get_psth(base_path, mat_path, dfof_method, tifFolder, pre_time, length, e
 
 
 
-def nodaq_stimtest_df(traces, mat_path, do_cell_variables = False, base_path = None):
+def nodaq_stimtest_df(traces, mat_path, do_cell_variables = False, base_path = None, planes_key = None):
     """from the output of get_psf_sing_holo_seq, create a pandas dataframe w/various
     info.
     traces: output of get_psf_sing_holo_seq
@@ -322,12 +341,11 @@ def nodaq_stimtest_df(traces, mat_path, do_cell_variables = False, base_path = N
     frame = frame.reset_index(level=['major','minor'])
     all_melted = pd.melt(frame, ('major','minor'))
 
-    # for (no)daq stim Tests
-    # first, get the power used on a trial-by-trial basis
-    # load the mat file (again...)
+    # for (no)daq stim Tests, first, get the power used on a trial-by-trial basis
     mat = sio.loadmat(mat_path)
     trial_stim_cond = get_trial_power(mat)
     trial_pulse_cond = get_trial_pulses(mat)
+    trial_cell_cond = get_trial_ncells(mat)
 
     if len(all_melted['minor'].unique()) > len(trial_stim_cond):
         raise ValueError('Number of trial conditions is less than n trials in array.')
@@ -335,8 +353,10 @@ def nodaq_stimtest_df(traces, mat_path, do_cell_variables = False, base_path = N
         print('WARNING TRIALS IN DF SMALlER THAN CONDS, CUTTING CONDS')
         trial_stim_cond = trial_stim_cond[:len(all_melted['minor'].unique())]
         trial_pulse_cond = trial_pulse_cond[:len(all_melted['minor'].unique())]
+        trial_cell_cond = trial_cell_cond[:len(all_melted['minor'].unique())]
     trial_df = pd.DataFrame({'minor':list(range(len(trial_stim_cond))),
-                                         'power': trial_stim_cond, 'pulses': trial_pulse_cond})
+                                         'power': trial_stim_cond, 'pulses': trial_pulse_cond,
+                            'ncells_holo': trial_cell_cond})
     all_melted = all_melted.merge(trial_df, on='minor')
 
     #for trial in all_melted['minor'].unique():
@@ -346,7 +366,7 @@ def nodaq_stimtest_df(traces, mat_path, do_cell_variables = False, base_path = N
     
     
     if do_cell_variables and base_path is not None:
-        mapping, dists = get_target_mapping(mat, base_path)
+        mapping, dists = get_target_mapping(mat, base_path, planes_key = planes_key)
         medians = get_cell_field(base_path, 'med')
         planes = get_cell_field(base_path, 'iplane')
         for cell in all_melted['major'].unique():
@@ -354,6 +374,7 @@ def nodaq_stimtest_df(traces, mat_path, do_cell_variables = False, base_path = N
             all_melted.loc[all_melted.major==cell, 'mediany'] = medians[mapping[cell]][1]
             all_melted.loc[all_melted.major==cell, 'cell_idx'] = mapping[cell]
             all_melted.loc[all_melted.major==cell, 'dist'] = dists[cell]
+            all_melted.loc[all_melted.major==cell, 'plane'] = planes[mapping[cell]]
             
 
     all_melted = all_melted.rename(columns = {'major':'cell', 'minor':'trial', 'variable':'time',
@@ -361,7 +382,93 @@ def nodaq_stimtest_df(traces, mat_path, do_cell_variables = False, base_path = N
 
     return all_melted
 
-
+def multi_ensemble_stim_df(traces, mat_path, cut_motion=None, planes_key=None,
+                          base_path=None, pixel_shift=None,is_pbal=False):
+    """from the output of get_psf_sing_holo_seq, create a pandas dataframe w/various
+    info.
+    traces: output of get_psf_sing_holo_seq
+    mat_path: path to stim info, has fields 'stimTags' and 'strengthKey' which is ordered list of
+        what strength numbers in 'stimTags' corresponds to.
+    do_cell_vars: whether to add various cell variables like redness to df
+    """
+    s=time.time()
+    mat = sio.loadmat(mat_path)
+    powers = get_trial_power(mat)
+    targs_by_trial, holo_by_trial, bal_per_trial = get_trial_stimmed_targs(mat,is_pbal=is_pbal)
+    mapping, dist = get_target_mapping(mat, base_path, planes_key,pixel_shift=pixel_shift)
+    
+    traces = traces.astype('float16')
+    #change traces into a pandas array with cell and time as cols
+    frame = pd.Panel(np.transpose(traces)).to_frame(filter_observations = False)
+    frame = frame.reset_index(level=['major','minor'])
+    all_melted = pd.melt(frame, ('major','minor'))
+    print('first stuff', time.time()-s)
+    s=time.time()
+    if is_pbal:
+        trial_df = pd.DataFrame({'minor':list(range(len(powers))),'power':powers,'holo':holo_by_trial,
+                                'is_bal':bal_per_trial})
+    else:
+        trial_df = pd.DataFrame({'minor':list(range(len(powers))),'power':powers,'holo':holo_by_trial})
+    all_melted = all_melted.merge(trial_df, on='minor')
+    print('first melt', time.time()-s)
+    s=time.time()
+    
+    #NEW 5/18 - ONLY DISALLOW CELLS MAPPED MULTIPLE TIMES
+    single_map_targ_idx = get_index_of_best_targets(mat_path, base_path, np.inf,
+                                          planes_key = planes_key, pixel_shift=pixel_shift)
+    print('THERE ARE', len(np.where(dist[np.setdiff1d(list(range(len(mapping))),single_map_targ_idx)]<5)[0]), 'HOLOS EXCLUDED CLOSER THAN LIM')
+    all_holos_targs = get_targs_per_holo(mat)
+    for _,h in all_holos_targs.items():
+        targs_single_match_trial = np.intersect1d(single_map_targ_idx, h)
+        print('shot trial',len(h),'matched trial',len(targs_single_match_trial))
+    
+    
+    for trial in all_melted['minor'].unique():
+        this_set = all_melted.minor==trial
+        
+        targs_for_this_trial = targs_by_trial[trial]
+        targs_single_match_trial = np.intersect1d(single_map_targ_idx, targs_for_this_trial)
+        
+        cells_this_holo = mapping[targs_single_match_trial.astype('uint16')]
+        all_melted.loc[(this_set) & (all_melted.major.isin(cells_this_holo)),'stimmed'] = 1
+        #all_melted.loc[(this_set) and not (all_melted.major.isin(cells_this_holo)),'stimmed'] = False
+        if cut_motion is not None:
+            #for time reasons, try trialwise
+            s=time.time()
+            for iplane in range(len(np.unique(planes))):
+                all_melted.loc[all_melted.major.isin(cells_per_plane[iplane])
+                               & (this_set),'max_motion'] = np.max(cut_motion[trial,iplane,:])
+            print(time.time()-s)
+            #if seq[trial] is not 0:                    
+            #    for cell in all_melted[(this_set) & all_melted.stimmed==1].major.unique():
+            #        this_set_cell = all_melted.major==cell
+            #        all_melted.loc[(this_set) & (this_set_cell), 'max_motion'] = np.max(cut_motion[trial,cell,:])
+            #        all_melted.loc[(this_set) & (this_set_cell), 'mean_motion'] = np.nanmean(cut_motion[trial,cell,:])
+            #else:
+            #    for cell in all_melted.major.unique():
+            #        this_set_cell = all_melted.major==cell
+            #        all_melted.loc[(this_set) & (this_set_cell), 'max_motion'] = np.max(cut_motion[trial,cell,:])
+            #        all_melted.loc[(this_set) & (this_set_cell), 'mean_motion'] = np.nanmean(cut_motion[trial,cell,:])
+    print('trial_info', time.time()-s)
+    s=time.time()
+        
+        
+    all_melted = all_melted.rename(columns = {'major':'cell', 'minor':'trial', 'variable':'time',
+                       'value': 'df'})  
+    
+    #add the hologram target info
+    #cell_df = pd.DataFrame({'cell': mapping, 'target_numb': range(len(mapping)), 'target_dist': _})
+    #all_melted = all_melted.merge(cell_df,on='cell',how='outer') #have to use outer to make it not delted cells no tin cell_df
+    
+    #add the plane and median
+    if base_path is not None:
+        all_melted = add_cell_info(all_melted, base_path, fix_offset=True)
+    
+        df = all_melted
+        df.loc[:,'x']=df.medianx.values
+        df.loc[:,'y']=df.mediany.values
+    print(time.time()-s)
+    return df
 ### PANDAS TRANSFORM FXNS ######
 
 def mean_difference(df, prestart, prestop, start, stop, add_columns = []):
@@ -377,9 +484,9 @@ def mean_difference(df, prestart, prestop, start, stop, add_columns = []):
     return mean_post
 
 
-def get_normed_x_y_err(these_vals):
-    x_mean=these_vals.stim.values
-    y_mean=these_vals.differ.values
+def get_normed_x_y_err(these_vals,val_col = 'df',stim_col='stim'):
+    x_mean=these_vals[stim_col].values
+    y_mean=these_vals[val_col].values
     semy=these_vals['sem'].values
 
     y_mean = y_mean - y_mean.min()
