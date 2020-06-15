@@ -3,6 +3,7 @@ import numpy as np
 import os
 from glob import glob
 import pickle
+from scipy import interpolate
 """
 Utils for interacting with tiffs written by scan image. Getting metadata,
 finding lengths, finding aux Triggers, ect.
@@ -23,7 +24,6 @@ def get_nchannels(file):
         nchannels = 1
     else:
         nchannels = len(metadata.split('channelSave = [')[1].split(']')[0].split(';'))
-    print(nchannels)
     return nchannels
 
 def get_nvols(file):
@@ -41,6 +41,33 @@ def get_nvols(file):
         nvols = len(metadata.split('hStackManager.arbitraryZs = [')[1].split(']')[0].split(' '))
     return nvols
 
+def get_vol_locs(file, opto_cal = [0,3.5,6,7,9.5,11,13], um_cal = [0,15,26,30,45,54,66]):
+    """ return the vol z locs, and an attempt at conversion to um """
+    interper = interpolate.interp1d(opto_cal,um_cal, fill_value='extrapolate')
+    with ScanImageTiffReader(file) as reader:
+        metadata = reader.metadata()
+    #rint(metadata.split('hFastZ.userZs')[1])
+    #rint(len(metadata.split('hFastZ.userZs')))
+    #print(metadata.split('arbitraryZs')[1])
+    
+    try:
+        if metadata.split('hFastZ.userZs = ')[1][0]=='0':
+            return 1
+        vols = metadata.split('hFastZ.userZs = [')[1].split(']')[0].split(' ')
+    except:
+        vols = metadata.split('hStackManager.arbitraryZs = [')[1].split(']')[0].split(' ')
+    vols = np.array(vols).astype('float16')
+    return vols, interper(vols)
+
+def get_tif_filename(tifFolder, base_path):
+    """just get a single tif from the first folder to run other fxns on"""
+    # bc the folders won't necessarily be in suite2p order, we need to get subfolders from base_path
+    fold_names = base_path.split('/')[-3].split('_')
+    print('these are my folders', fold_names)
+    #if no underscore, only one folder
+    folders = [tifFolder + fold_names[i] for i in range(0, len(fold_names))]
+    tif = glob(folders[0]+'/*.tif')[0]
+    return tif
 
 def get_starts_multifolder(tifFolder, base_path, get_stim_starts=True):
     """ get tif lengths and starts for all epochs in base_path, by looking at tiffs in tifFolder
@@ -164,3 +191,21 @@ def get_tif_data(tifFolder, picklefile, matfile = None, get_stim_starts = True):
             saveme = {'fileStart':file_starts+1, 'fileLength':file_lengths,'stimStart':stim_starts, 'FR':FR}
             sio.savemat(matfile,saveme)
         return stim_starts, file_lengths, file_starts
+    
+def get_mimg_data(f):
+    """given a scanimage data file, get the mean image per plane and channels"""
+    with ScanImageTiffReader(f) as reader:
+        data = reader.data();
+    data = data.astype('float32')
+    nvols = get_nvols(f)
+    nchan = get_nchannels(f)
+    mimgs = np.zeros((512,512,3,nvols),'float32')
+    count=0
+    chan_conv = [1,0] #convert gr to rg
+    for iplane in range(nvols):
+        for ichan in range(nchan):
+            mimg = np.nanmean(data[count:data.shape[0]:nvols*nchan,:,:],axis=0)
+            
+            mimgs[:,:,chan_conv[ichan],iplane] = mimg
+            count += 1
+    return mimgs
