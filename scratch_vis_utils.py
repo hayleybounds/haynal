@@ -8,8 +8,8 @@ from ScanImageTiffReader import ScanImageTiffReader
 from PSTH_creation_utils import *
 import os
 from scipy.stats import f_oneway
-
-from gen_utils import mean_by_id
+import h5py
+from gen_utils import mean_by_id, add_cell_info
 
 def get_orientations_py(mat):
     all_grating_info = np.vstack(mat['result']['gratingInfo'][0,0][0,0].tolist()[0:5])
@@ -23,6 +23,14 @@ def get_locinds(mat):
     locinds = mat['visData']['locinds'][0][0]
     locinds = np.transpose(locinds)
     return locinds
+
+def get_CMN_contrasts(mat_path):
+    
+    with h5py.File(mat_path) as f:
+        contrasts = f['result']['contrasts_by_trial'][:,0]
+        print('isi was ', f['result']['isi'][0])
+        print('CMN duration was ', f['result']['stimduration'][0])
+    return contrasts
 
 
 def get_median_loc(mat):
@@ -339,7 +347,7 @@ def get_trialwise_data_pydat(base_path, dfof_method, tifFolder, pre_time, epoch,
         of acq, to use for baseline subtraction
         
     """
-    
+    print(base_path)
     if traces is None:
         _,_,_, sp, traces = get_iscell_F_Neu(base_path)
        
@@ -396,15 +404,19 @@ def traces_to_vis_df_py(traces, mat_path, exp_type, contrasts=None, base_path=No
         tags = get_orientations_py(mat)
         if len(all_melted['minor'].unique()) > len(tags):
             raise ValueError('number of stim tags is less than n trials in psf array');
-        for trial in all_melted['minor'].unique():
-            all_melted.loc[all_melted.minor==trial,'orientation'] = tags[trial]
+        trial_df = pd.DataFrame({'trial': list(range(len(tags))),
+                               'orientation': tags})
+        
     if exp_type == 'noise':
+        if contrasts is None:
+            contrasts = get_CMN_contrasts(mat_path)
         tags = contrasts
         if len(all_melted['minor'].unique()) > len(tags):
             print(len(all_melted['minor'].unique()), len(tags))
             raise ValueError('number of stim tags is less than n trials in psf array');
-        for trial in all_melted['minor'].unique():
-            all_melted.loc[all_melted.minor==trial,'contrast'] = tags[trial]
+        trial_df = pd.DataFrame({'trial': list(range(len(tags))),
+                               'contrast': contrasts})
+        
     elif exp_type == 'retino':
         mat = sio.loadmat(mat_path)
         tags = mat['result']['locinds'][0][0].T
@@ -413,11 +425,14 @@ def traces_to_vis_df_py(traces, mat_path, exp_type, contrasts=None, base_path=No
         if len(drop_locs)>0:
             x= np.delete(x,np.array(drop_locs))
             y = np.delete(y, np.array(drop_locs))
-        for trial in all_melted['minor'].unique():
-            all_melted.loc[all_melted.minor==trial,'x'] = x[trial]
-            all_melted.loc[all_melted.minor==trial,'y'] = y[trial]
+        trial_df = pd.DataFrame({'trial': list(range(len(x))),
+                                'x': x,
+                                'y': y})
+        
+    
     all_melted = all_melted.rename(columns = {'major':'cell', 'minor':'trial', 'variable':'time',
                        'value': 'df'})
+    all_melted = all_melted.merge(trial_df)
     if base_path is not None:
         all_melted = add_cell_info(all_melted, base_path)
   
