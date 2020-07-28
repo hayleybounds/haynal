@@ -9,9 +9,15 @@ Utils for interacting with tiffs written by scan image. Getting metadata,
 finding lengths, finding aux Triggers, ect.
 """
 
-def get_prev_folder_length(base_path, epoch):
+
+def get_epoch_lengths(base_path):
+    #loads ops, delivers the the length in frames (already adj for vol and nchan) of each epoch
     ops = np.load(base_path + 'ops1.npy')
     lengths = ops[0]['frames_per_folder']
+    return lengths
+
+def get_prev_folder_length(base_path, epoch):
+    lengths = get_epoch_lengths(base_path)
     return sum(lengths[0:epoch-1])
 
 
