@@ -36,6 +36,14 @@ def get_file_starts_peri(file_location):
             file_starts.append(file_starts[len(file_starts)-1]+f)
     return file_starts
 
+def fix_stim_times_peri(traces, stimTimes):
+    #fix if stimtimes doesn't fill in the end nans
+    if traces.shape[0]>stimTimes.shape[0]:
+        anStimTimes=np.zeros((1,traces.shape[0]))
+        anStimTimes[0,0:stimTimes.shape[0]] = stimTimes
+        stimTimes=anStimTimes[0,:]
+    return stimTimes
+
 #util functions for transforming loaded data
 def get_psf_per_online(traces, file_starts, first_stim_times, pre_time, length, dfof_method,
                    df_range = None, do_zscore=False, do_baseline = False, baseline_n=None, skip_ends = 0,
@@ -81,6 +89,20 @@ def traces_to_stim_per_online(traces, powers):
     all_melted = all_melted.rename(columns = {'major':'cell', 'minor':'trial', 'variable':'time',
                        'value': 'df'})    
     return all_melted
+
+def label_stimmed_peri(df, stimTimes):
+    #label cells actually stimmed
+    df = df[~np.isnan(df.stim)]
+    cells_stimmed = np.where(stimTimes>0)[0]
+    df.loc[:,'stimmed'] = df.cell.isin(cells_stimmed)
+
+    #make sure the targets are actually properly transferred
+    assert len(df.cell[df.stimmed].unique()) == len(cells_stimmed)
+    for t in cells_stimmed:
+        assert t in df.cell[df.stimmed].unique()
+    return df
+
+
 def alt_sigmoid_f(t,a,b,r):
     t[t==0] = 0+.0000001
     return a/(1+(t/b)**-r)
